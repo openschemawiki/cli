@@ -1,0 +1,41 @@
+{
+  "$id": "https://example.com/health-record.schema.json",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "patientName",
+    "dateOfBirth",
+    "bloodType"
+  ],
+  "properties": {
+    "allergies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "bloodType": {
+      "type": "string"
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dateOfBirth": {
+      "type": "string",
+      "format": "date"
+    },
+    "medications": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "patientName": {
+      "type": "string"
+    }
+  },
+  "description": "Schema for representing a health record"
+}
