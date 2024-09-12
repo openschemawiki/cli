@@ -7,8 +7,8 @@
 <br />
 <div align="center">
 <picture>
-<source srcset="images/logo-dark.svg" media="(prefers-color-scheme: dark)">
-<img src="images/logo-light.svg" width="200">
+<source srcset="images/logo-light.svg" media="(prefers-color-scheme: dark)">
+<img src="images/logo-dark.svg" width="200">
 </picture>
 
 <h3 align="center">OpenSchema CLI</h3>
