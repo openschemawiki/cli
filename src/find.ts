@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { Command, program } from "commander";
 import ora from "ora";
+import { API_URL } from "./shared";
 
 
 export const findCommand = new Command("find")
@@ -32,7 +33,7 @@ export const findCommand = new Command("find")
 			body.tags = options.tags;
 		}
 
-		const result = await fetch(`http://localhost:3000/api/search`, {
+		const result = await fetch(`${API_URL}/search`, {
 			method: "POST",
 			body: JSON.stringify(body),
 			headers: {

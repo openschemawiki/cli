@@ -1,13 +1,19 @@
-import { Command, program } from "commander";
+import { Command } from "commander";
 import inquirer from "inquirer";
-import ora from "ora";
 import * as fs from "fs"
 import ZSchema from "z-schema"
-import * as path from "path"
 import semver from "semver"
 import { getConfig } from "./lib/getConfig";
 import { getSchema } from "./lib/getSchema";
 import * as tar from "tar"
+import { notice } from "./utils/notice";
+import { formatByteSize } from "./utils/bytesize";
+import { success } from "./utils/success";
+import { error } from "./utils/error";
+import chalk from "chalk";
+import { CLIError } from "./utils/errors";
+import crypto from "crypto";
+import { ensureNoConsoleOverrun } from "./utils/console";
 
 export const pushCommand = new Command("push")
 	.argument("[dir]", "the directory where all the schema files are located", process.cwd())
@@ -17,36 +23,30 @@ export const pushCommand = new Command("push")
 		const config = getConfig(dir);
 
 		if (config === null) {
-			console.log("Could not find a openschema.json file in the current working directory.");
-			return;
+			throw new CLIError("Could not find a openschema.json file in the current working directory.", "enoent");
 		}
 
 		if (!("name" in config)) {
-			console.log("Your openschema.json file is missing a name field.");
-			return;
+			throw new CLIError("Your openschema.json file is missing a name field.");
 		}
 
 		if (!("version" in config)) {
-			console.log("Your openschema.json file is missing a version field.");
-			return;
+			throw new CLIError("Your openschema.json file is missing a version field.");
 		}
 
 		if (!("description" in config) || !config.description) {
-			console.log("Your openschema.json file is missing a description field.");
-			return;
+			throw new CLIError("Your openschema.json file is missing a description field.");
 		}
 
 		if (!("category" in config)) {
-			console.log("Your openschema.json file is missing a category field.");
-			return;
+			throw new CLIError("Your openschema.json file is missing a category field.");
 		}
 
 		// Check if the schema file exists
 		const schema = getSchema(dir)
 
 		if (!schema) {
-			console.log("Could not find a schema.json file in the current working directory.");
-			return;
+			throw new CLIError("Could not find a schema.json file in the current working directory.", "enoent");
 		}
 
 		// Check if the schema has an $id property. it should not have one since we will set one by ourselves
@@ -65,14 +65,33 @@ export const pushCommand = new Command("push")
 				return;
 			}
 		}
-		
+
 		const validator = new ZSchema({
 			strictMode: false
 		});
 
-		if (!validator.validateSchema(schema)) {
-			console.log("Your schema could not be validated!");
-			return
+		if ("$schema" in schema) {
+			// ZSchema can not handle an existing $schema property as it uses draft-04 when meta-validating schemas.
+			// So we need to delete it, prefetch the schema and provide it like that.
+			try {
+				const request = await fetch(schema.$schema as string)
+
+				const validationSchema = await request.json()
+				
+				delete validationSchema.$schema
+				delete schema.$schema;
+
+				if (!validator.validate(schema, validationSchema)) {
+					throw new CLIError("Your schema could not be validated!");
+				}
+			} catch(e) {
+				error(`Attempting to use ${schema.$schema} as validation schema resulted in an error.`)
+				throw new CLIError((e as Error).message);
+			}
+		} else {
+			if (!validator.validateSchema(schema)) {
+				throw new CLIError("Your schema could not be validated!");
+			}
 		}
 
 
@@ -104,22 +123,51 @@ export const pushCommand = new Command("push")
 			} catch (e) {}
 		}
 
-		console.clear();
+		// Enter the directory so that we don't have any trailing paths and we can easily lstat
+		process.chdir(dir)
 
-		const spinner = ora(
-			"Please hang tight while we verify and upload your schema."
-		).start();
+		const paths = fs.readdirSync(".")
 
+		notice(`📦 ${config.name}`)
+		notice(chalk.blue("Tarball Contents"))
+
+		let size = 0;
+		let fileCount = 0;
 		const zipped = tar.create({
-			gzip: false
-		}, [dir])
-		// Retrieve the buffer without writing to disk
+			gzip: true,
+			preservePaths: false,
+			follow: true,
+			portable: true,
+			async onWriteEntry(entry) {
+				// Get the entry size
+				const stats = fs.lstatSync(entry.path)
+
+				notice(`${formatByteSize(stats.size)} ${entry.path}`)
+				size += stats.size;
+				fileCount++
+			}
+		}, paths)
+
 		const buffer = await new Promise<Buffer>((resolve, reject) => {
 			const chunks: Buffer[] = []
 			zipped.on("data", (chunk) => chunks.push(chunk))
 			zipped.on("end", () => resolve(Buffer.concat(chunks)))
 			zipped.on("error", reject)
 		})
+
+		notice(`unpacked size: ${chalk.bold(formatByteSize(size))}`)
+		notice(`package size: ${chalk.bold(formatByteSize(buffer.byteLength))}`)
+
+		const sha512 = crypto.createHash("sha512").update(buffer).digest("hex")
+		const sha512Buffer = Buffer.from(sha512)
+		const integrity = `sha512-${sha512Buffer.toString("base64")}`
+
+		notice(`sha512: ${ensureNoConsoleOverrun(sha512)}`)
+		notice(`integrity: ${ensureNoConsoleOverrun(integrity)}`)
+		notice(`total files: ${fileCount}`)
+		notice("")
+		notice(`Publishing to https://openschema.wiki/ with tag latest and default access`)
+
 
 		const body = new FormData()
 		body.set("tarball", new Blob([buffer]))
@@ -135,12 +183,12 @@ export const pushCommand = new Command("push")
 		});
 
 		if (response.ok) {
-			spinner.succeed(
-				"Alrighty! Looks like we're good to go! Your schema was submitted for review."
+			success(
+				"Your schema was successfully submitted for review."
 			);
 		} else {
-			spinner.fail("Looks like something went wrong...");
-			console.log(await response.text());
+			error("Looks like something went wrong...");
+			error(await response.text());
 		}
 	});
 

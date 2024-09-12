@@ -5,6 +5,8 @@ import ora from "ora";
 import * as fs from "fs"
 import * as tar from "tar"
 import * as path from "path"
+import { CLIError } from "./utils/errors";
+import { success } from "./utils/success";
 
 export const pullCommand = new Command("pull")
 	.description("Pull a schema from the OpenSchema Store")
@@ -57,18 +59,36 @@ export const pullCommand = new Command("pull")
 			]);
 
 			if (answers.overwrite === false) {
-				console.log(chalk.red("Aborted"));
-				return;
+				throw new CLIError("Aborted");
 			}
+		} else {
+			fs.mkdirSync(location, { recursive: true });
 		}
 
 		// The tarball is base64 encoded.
 		// We need to convert it to a buffer and write it to the directory
 		const buffer = Buffer.from(schema.tarballBase64, "base64");
 
-		const extract = tar.extract()
+		const parser = new tar.Parser({
+			gzip: true,
+			preservePaths: false,
+			follow: true,
+			portable: true,
+			absolute: process.cwd(),
+			onReadEntry(entry) {
+				entry.on("data", (data) => {
+					fs.writeFileSync(path.join(location, entry.path), data.toString());
+				});
 
-		extract.end(buffer)
+				entry.on("end", () => {
+					entry.resume();
+				});
 
-		console.log(`Schema '${chalk.bold(name)}' saved to '${chalk.bold(location)}'`);
+				fs.writeFileSync(path.join(location, entry.path), "");
+			},
+		})
+
+		parser.end(buffer)
+
+		success(`Schema '${chalk.bold(name)}' saved to '${chalk.bold(location)}'`);
 	});
